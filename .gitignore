@@ -1,0 +1,5 @@
+hw2_v2/data*
+hw2_v2/tmp*
+hw2_v2/dictionary.npy
+*__pycache__*
+*.pyc
