@@ -26,7 +26,7 @@ def get_feature_from_wordmap(wordmap, dict_size):
     (1) We can use np.histogram with flattened wordmap
     '''
     hist, bin_edges = np.histogram(wordmap, dict_size)
-    return hist
+    return hist / np.sum(hist)
 
 
 def get_feature_from_wordmap_SPM(wordmap, layer_num, dict_size):
@@ -130,7 +130,7 @@ def get_feature_from_wordmap_SPM(wordmap, layer_num, dict_size):
         hist_all[start:end] = concat_hists * (weight / np.sum(concat_hists))
 
     # Make sure the histograms are normalized to 1
-    assert np.abs(np.sum(hist_all) - 1) <= 1e-5
+    hist_all = hist_all / np.sum(hist_all)
     return hist_all
 
 
