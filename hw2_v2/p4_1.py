@@ -1,5 +1,6 @@
 import nbimporter
 import numpy as np
+import numpy.matlib as matlib
 import scipy.ndimage
 from skimage import io
 import skimage.transform
@@ -10,8 +11,53 @@ import threading
 import queue
 import torch
 import torchvision
-import torchvision.transforms
 
+def preprocess_image(image, size = (224, 224, 3), mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]):
+    '''
+    Preprocesses the image to load into the prebuilt network.
+
+    [input]
+    * image: numpy.ndarray of shape (H,W,3)
+
+    [output]
+    * image_processed: torch.array of shape (3,H,W)
+    '''
+
+    # ----- TODO -----
+    
+    if(len(image.shape) == 2):
+        image = np.stack((image, image, image), axis=-1)
+
+    if(image.shape == 3 and image.shape[2] == 1):
+        image = np.concatenate((image, image, image), axis=-1)
+
+    if(image.shape[2] == 4):
+        image = image[:, :, 0:3]
+    '''
+    HINTS:
+    1.> Resize the image (look into skimage.transform.resize)
+    2.> normalize the image
+    3.> convert the image from numpy to torch
+    '''
+    resized_img = skimage.transform.resize(image, size)
+    resized_img = resized_img.transpose((2, 0, 1))
+
+    # Create mean 
+    mean_1 = matlib.repmat(mean[0], resized_img.shape[1], resized_img.shape[2])
+    mean_2 = matlib.repmat(mean[1], resized_img.shape[1], resized_img.shape[2])
+    mean_3 = matlib.repmat(mean[2], resized_img.shape[1], resized_img.shape[2])
+    mean   = np.stack([mean_1, mean_2, mean_3])
+    # print(mean.shape)
+
+    # Create STD
+    std_1 = matlib.repmat(std[0], resized_img.shape[1], resized_img.shape[2])
+    std_2 = matlib.repmat(std[1], resized_img.shape[1], resized_img.shape[2])
+    std_3 = matlib.repmat(std[2], resized_img.shape[1], resized_img.shape[2])
+    std   = np.stack([std_1, std_2, std_3])
+
+    # Normalize and return the torch image
+    norm_img = (resized_img - mean) / std
+    return torch.from_numpy(norm_img)
 
 def get_image_feature(args):
     '''
@@ -27,19 +73,19 @@ def get_image_feature(args):
     '''
     i, image_path, vgg16 = args
     image = io.imread(image_path) / 255
+    img_torch = preprocess_image(image)
     
     '''
     HINTS:
     1.> Think along the lines of evaluate_deep_extractor
     '''
-    img_torch = torch.torch(image)
     with torch.no_grad():
         vgg_classifier = torch.nn.Sequential(*list(vgg16.classifier.children())[:-3])
         vgg_feat_feat = vgg16.features(img_torch[None, ])
         vgg_feat_feat = vgg_classifier(vgg_feat_feat.flatten())
     return [i, vgg_feat_feat]
 
-def build_recognition_system(vgg16, num_workers=2):
+def build_recognition_system(vgg16, num_workers=4):
     '''
     Creates a trained recognition system by generating training features from all training images.
 
@@ -59,13 +105,14 @@ def build_recognition_system(vgg16, num_workers=2):
     2.> Keep track of the order in which input is given to multiprocessing
     '''
     args = []
-    out  = {}
 
     # Parse out the training files
     train_files = train_data.get("files")
     if train_files is None:
         raise ValueError("No valid training files available :(")
     train_files = ["./data/" + str(file) for file in train_files]
+
+    out  = np.zeros((len(train_files), 4096))
 
     # Gather arguments for multiprocessing
     for idx, train_sample in enumerate(train_files):
@@ -74,31 +121,34 @@ def build_recognition_system(vgg16, num_workers=2):
     # Do the processing
     with multiprocess.Pool(num_workers) as p:
         # Run the function and save the result
-        r = p.map(get_image_feature, args)
-        out[r[0]] = r[1]
+        result = p.map(get_image_feature, args)
+
+        # Save the results in the dictionary
+        for r in result:
+            out[r[0]] = r[1]
         
     # Use the dictionary to get the ordered features
-    ordered_features = np.array(list(out.values()))
+    # ordered_features = np.array(list(out.values()))
     '''
     HINTS:
     1.> reorder the features to their correct place as input
     '''
-    print("done", ordered_features.shape)
+    print("done", out.shape)
     labels = train_data.get("labels")
-    np.savez('trained_system_deep.npz', features=ordered_features, labels=labels)
+    np.savez('trained_system_deep.npz', features=out, labels=labels)
 
 def helper_func(args):
     # Parse the args
-    i, test_sample, vgg16, trained_features = args
+    i, test_sample, vgg16, trained_features, labels = args
 
     # Calculate the test features
-    test_features = get_image_feature((i, test_sample, vgg16))
+    test_features = get_image_feature((i, test_sample, vgg16))[1]
 
     # Calculate the distance between the two features
-    dist = np.sum((test_features - trained_features) ** 2, axis = 1)
+    dist = np.sum((np.array(test_features) - trained_features) ** 2, axis = 1)
 
     # The smallest distance is the most similar
-    pred_label = np.argmin(dist)
+    pred_label = labels[np.argmin(dist)]
 
     return [i, pred_label]
 
@@ -123,6 +173,7 @@ def evaluate_recognition_system(vgg16, num_workers=2):
 
     trained_system = np.load("trained_system_deep.npz", allow_pickle=True)
     image_names = test_data['files']
+    image_names = ["./data/" + str(file) for file in image_names]
     test_labels = test_data['labels']
 
     trained_features = trained_system['features']
@@ -148,13 +199,14 @@ def evaluate_recognition_system(vgg16, num_workers=2):
     args = []
     pred_labels_dict = {}
     for idx, test_sample in enumerate(image_names):
-        args.append((idx, test_sample, vgg16, trained_features))
+        args.append((idx, test_sample, vgg16, trained_features, train_labels))
 
     # Do the processing
     with multiprocess.Pool(num_workers) as p:
         # Run the function and save the result
-        r = p.map(get_image_feature, args)
-        pred_labels_dict[r[0]] = r[1]
+        res = p.map(helper_func, args)
+        for r in res:
+            pred_labels_dict[r[0]] = r[1]
 
     pred_labels = np.array(list(pred_labels_dict.values()))
 
