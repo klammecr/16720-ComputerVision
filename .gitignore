@@ -1,5 +1,7 @@
-hw2_v2/data*
-hw2_v2/tmp*
+*data*
+*tmp*
+*.venv*
+*.mat
 hw2_v2/dictionary.npy
 *__pycache__*
 *.pyc
