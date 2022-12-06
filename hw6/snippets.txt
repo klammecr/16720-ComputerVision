@@ -1,0 +1,17 @@
+      # valid_idx = (yv>=0) & (yv < It1.shape[0]) & (xv >= 0) & (xv < It1.shape[1])
+      # yv        = yv[valid_idx]
+      # xv        = xv[valid_idx]
+
+
+      By 3:
+      # I_x = I_x.T
+      # I_y = I_y.T
+      # # Find the A matrix, transpose it to make it of size [m, 2]
+      # delta_I = np.stack((I_x.reshape(-1), I_y.reshape(-1))).T
+
+           idx = 0
+      for y, x in zip(yv_temp.flatten(), xv_temp.flatten()):
+        dWx_dp = np.array([x, 0, y, 0, 1, 0])
+        dWy_dp = np.array([0, x, 0, y, 0, 1])
+        J[idx] = delta_I[idx] @ jacobian
+        idx   += 1
